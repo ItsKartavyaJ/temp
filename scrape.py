@@ -12,14 +12,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
-INPUT_CSV  = "input.csv"        # ← upload your CSV here on GCP
-OUTPUT_CSV = "output_INC.csv"   # ← output will be saved here
+INPUT_CSV  = r"C:\Users\HP\Downloads\to scrape - INC list - kartavya - Sheet1.csv"
+OUTPUT_CSV = "output_INC_25_2_25.csv"
 
-NUM_WORKERS   = 2          # keep at 2-3 on e2-medium to avoid RAM issues
+NUM_WORKERS   = 4
 SAVE_INTERVAL = 20
-VERSION_MAIN  = 136        # ← auto-detected below, but set as fallback
-# ──────────────────────────────────────────────────────────────────────────────
+VERSION_MAIN  = 145    # ← updated to match your Chrome version
 
 lock         = threading.Lock()
 results      = []
@@ -30,60 +28,30 @@ FIELDNAMES = ["profile_url","Industry","Location","Leadership",
 
 driver_lock = threading.Lock()
 
-
-def get_chrome_version():
-    """Auto-detect installed Chrome version on Linux."""
-    import subprocess
-    try:
-        out = subprocess.check_output(
-            ["google-chrome", "--version"], stderr=subprocess.DEVNULL
-        ).decode().strip()
-        # e.g. "Google Chrome 136.0.7103.92"
-        version = int(out.split()[2].split(".")[0])
-        print(f"🔍 Detected Chrome version: {version}")
-        return version
-    except Exception as e:
-        print(f"⚠️  Could not detect Chrome version, using fallback {VERSION_MAIN}: {e}")
-        return VERSION_MAIN
-
-
 def make_driver():
     options = uc.ChromeOptions()
-
-    # ── Headless / server flags (required on GCP) ──
-    options.add_argument("--headless=new")
+    options.headless = False
     options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-extensions")
     options.add_argument("--blink-settings=imagesEnabled=false")
-    options.add_argument("--window-size=1920,1080")
     options.add_argument(
-        "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+        "--user-agent=Mozilla/5.0 (Macintosh; ARM64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
     )
-
-    # ── Chrome binary on Linux/GCP ──
-    options.binary_location = "/usr/bin/google-chrome"
-
+    options.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     prefs = {
         "profile.managed_default_content_settings.images": 2,
         "profile.default_content_setting_values.notifications": 2,
         "profile.managed_default_content_settings.stylesheets": 2,
     }
     options.add_experimental_option("prefs", prefs)
-
-    with driver_lock:
-        driver = uc.Chrome(
-            options=options,
-            use_subprocess=True,
-            version_main=CHROME_VERSION   # set once at startup
-        )
+    with driver_lock:   # ← prevents race condition during chromedriver setup
+        driver = uc.Chrome(options=options, use_subprocess=True, version_main=VERSION_MAIN)
     driver.set_page_load_timeout(25)
     return driver
-
-
 def get_field(soup, label_text, is_link=False):
     tag = soup.find("strong", string=label_text)
     if not tag:
@@ -96,7 +64,6 @@ def get_field(soup, label_text, is_link=False):
         return a["href"] if a and a.has_attr("href") else ""
     div = wrapper.find("div", class_="details-container")
     return div.get_text(strip=True) if div else ""
-
 
 def scrape_profile(driver, url):
     driver.get(url)
@@ -122,13 +89,11 @@ def scrape_profile(driver, url):
         "Rank"        : rank_tag.get_text(strip=True) if rank_tag else "",
     }
 
-
 def _save(rows):
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=FIELDNAMES)
         w.writeheader()
         w.writerows(rows)
-
 
 def worker(urls, worker_id, total, start_time):
     driver = make_driver()
@@ -154,11 +119,7 @@ def worker(urls, worker_id, total, start_time):
     finally:
         driver.quit()
 
-
 def main():
-    global CHROME_VERSION
-    CHROME_VERSION = get_chrome_version()
-
     with open(INPUT_CSV, newline="", encoding="utf-8") as f:
         rows = [r["profile_url"].strip()
                 for r in csv.DictReader(f)
@@ -176,7 +137,7 @@ def main():
         t = threading.Thread(target=worker, args=(chunk, idx+1, total, start))
         t.start()
         threads.append(t)
-        time.sleep(3)   # stagger browser launches to avoid race conditions
+        time.sleep(3)
 
     for t in threads:
         t.join()
@@ -188,7 +149,6 @@ def main():
     print(f"⏱  {elapsed/60:.1f} min total  |  {elapsed/max(len(results),1):.1f}s per profile")
     print(f"💾  Saved → {OUTPUT_CSV}")
     print(f"{'='*55}")
-
 
 if __name__ == "__main__":
     main()
